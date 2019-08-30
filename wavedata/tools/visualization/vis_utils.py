@@ -3,8 +3,72 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 from PIL import Image
+import vtk
 
 from wavedata.tools.obj_detection import obj_utils
+from wavedata.tools.core import calib_utils as calib
+from wavedata.tools.core import moose_load_calibration
+
+
+class ToggleActorsInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
+    """VTK interactor style that allows toggling the visibility of up to 12
+    actors with the F1-F12 keys. This object should be initialized with
+    the actors to toggle, and each actor will be assigned an F key based on
+    its order in the list.
+    """
+
+    def __init__(self, actors):
+        super(ToggleActorsInteractorStyle).__init__()
+
+        self.actors = actors
+        self.AddObserver("KeyPressEvent", self.key_press_event)
+
+    def key_press_event(self, obj, event):
+        vtk_render_window_interactor = self.GetInteractor()
+
+        key = vtk_render_window_interactor.GetKeySym()
+        if key in ["F1", "F2", "F3", "F4", "F5", "F6",
+                   "F7", "F8", "F9", "F10", "F11", "F12"]:
+
+            actor_idx = int(key.split("F")[1]) - 1
+
+            if actor_idx < len(self.actors) and \
+                    self.actors[actor_idx] is not None:
+                current_visibility = self.actors[actor_idx].GetVisibility()
+                self.actors[actor_idx].SetVisibility(not current_visibility)
+
+                render_window = vtk_render_window_interactor.GetRenderWindow()
+                render_window.Render()
+
+
+class CameraInfoInteractorStyle(ToggleActorsInteractorStyle):
+    """VTK interactor style that allows toggling the visibility of up to 12
+    actors with the F1-F12 keys. This also enables registering events such
+    as clicks and via these registered events, displays certain information
+    such as camera position etc.
+    """
+
+    def __init__(self, actors):
+        super(ToggleActorsInteractorStyle).__init__()
+
+        self.actors = actors
+        self.AddObserver("MiddleButtonReleaseEvent",
+                         self.middle_button_release_event)
+        self.AddObserver("KeyPressEvent", self.key_press_event)
+
+    def middle_button_release_event(self, obj, event):
+        print("Middle Button released")
+        self.OnMiddleButtonUp()
+
+        renderer = self.GetCurrentRenderer()
+
+        current_cam = renderer.GetActiveCamera()
+        print("ViewAngle {}".format(current_cam.GetViewAngle()))
+        print("CamPos {}".format(current_cam.GetPosition()))
+        print("FocalPoint {}".format(current_cam.GetFocalPoint()))
+        print("Roll {}".format(current_cam.GetRoll()))
+        print("GetModelViewTransformMatrix {}".format(
+            current_cam.GetModelViewTransformMatrix()))
 
 
 def visualization(image_dir, index, flipped=False, display=True,
@@ -30,7 +94,7 @@ def visualization(image_dir, index, flipped=False, display=True,
 
     if not flipped:
         # Grab image data
-        img = np.array(Image.open("%s/%06d.png" % (image_dir, index)),
+        img = np.array(Image.open("%s/%010d.png" % (image_dir, index)),
                        dtype=np.uint8)
         # plot images
         ax1.imshow(img)
@@ -342,6 +406,127 @@ def plot_3d_cube(corners, ax, c='lime'):
             [p6[1], p2[1]],
             [p6[2], p2[2]],
             c=c)
+
+
+def project_img_to_point_cloud(points, image, calib_dir, img_idx):
+    """ Projects image colours to point cloud points
+
+    Arguments:
+        points (N by [x,y,z]): list of points where N is
+            the number of points
+        image (X by Y by [r,g,b]): colour values in image space
+        calib_dir (str): calibration directory
+        img_idx (int): index of the requested image
+
+    Returns:
+        [N by [r,g,b]]: Matrix of colour codes. Indices of colours correspond
+            to the indices of the points in the 'points' argument
+
+    """
+    # Save the pixel colour corresponding to each point
+    #frame_calib = calib.read_calibration(calib_dir, img_idx)
+    moose_calib = moose_load_calibration.load_calibration(calib_dir)
+
+    if img_idx < 100:
+
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM00']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        stereo_calib_p2 = T_IMG_CAM
+
+    elif (img_idx >= 100 and img_idx < 200):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM01']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        stereo_calib_p2 = T_IMG_CAM
+
+    elif (img_idx >= 200 and img_idx < 300):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM02']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        stereo_calib_p2 = T_IMG_CAM
+
+    elif (img_idx >= 300 and img_idx < 400):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM03']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        stereo_calib_p2 = T_IMG_CAM
+
+    elif (img_idx >= 400 and img_idx < 500):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM04']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        stereo_calib_p2 = T_IMG_CAM
+
+    elif (img_idx >= 500 and img_idx < 600):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM05']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        stereo_calib_p2 = T_IMG_CAM
+
+    elif (img_idx >= 600 and img_idx < 700):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM06']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        stereo_calib_p2 = T_IMG_CAM
+
+    elif (img_idx >= 700 and img_idx < 800):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM07']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        stereo_calib_p2 = T_IMG_CAM
+
+    else:
+        print("YOLO")
+
+
+
+
+    point_in_im = calib.project_to_image(
+        points.T, p=stereo_calib_p2).T
+
+    point_in_im_rounded = np.floor(point_in_im)
+    point_in_im_rounded = point_in_im_rounded.astype(np.int32)
+
+    point_colours = []
+    for point in point_in_im_rounded:
+        point_colours.append(image[point[1], point[0], :])
+
+    point_colours = np.asanyarray(point_colours)
+
+    return point_colours
 
 
 def cv2_show_image(window_name, image,
