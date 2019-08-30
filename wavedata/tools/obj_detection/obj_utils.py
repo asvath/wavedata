@@ -1,8 +1,11 @@
 import os
 
+import cv2
 import numpy as np
 
-from wavedata.tools.core import calib_utils
+from wavedata.tools.core import calib_utils as calib
+from wavedata.tools.core import depth_map_utils
+from wavedata.tools.core import moose_load_calibration
 
 
 class ObjectLabel:
@@ -79,17 +82,21 @@ def read_labels(label_dir, img_idx, results=False):
     obj_list = []
 
     # Extract the list
-    if os.stat(label_dir + "/%06d.txt" % img_idx).st_size == 0:
+    if os.stat(label_dir + "/" +"%010d.txt" % img_idx).st_size == 0:
         return
 
     if results:
-        p = np.loadtxt(label_dir + "/%06d.txt" % img_idx, delimiter=' ',
+        p = np.loadtxt(label_dir + "/" + "%010d.txt" % img_idx, delimiter=' ',
                        dtype=str,
                        usecols=np.arange(start=0, step=1, stop=16))
     else:
-        p = np.loadtxt(label_dir + "/%06d.txt" % img_idx, delimiter=' ',
+        p = np.loadtxt(label_dir + "/" + "%010d.txt" % img_idx, delimiter=' ',
                        dtype=str,
                        usecols=np.arange(start=0, step=1, stop=15))
+
+
+    print("doooodahhhhh")
+    print(label_dir + "/" + "%010d.txt" % img_idx)
 
     # Check if the output is single dimensional or multi dimensional
     if len(p.shape) > 1:
@@ -216,6 +223,32 @@ def build_bbs_from_objects(obj_list, class_needed):
 
     return boxes_2d, boxes_3d, scores
 
+'''
+def get_stereo_point_cloud(img_idx, calib_dir, disp_dir):
+    """
+    Gets the point cloud for an image calculated from the disparity map
+
+    :param img_idx: image index
+    :param calib_dir: directory with calibration files
+    :param disp_dir: directory with disparity images
+
+    :return: (3, N) point_cloud in the form [[x,...][y,...][z,...]]
+    """
+
+    disp = cv2.imread(disp_dir + "/%06d_left_disparity.png" % img_idx,
+                      cv2.IMREAD_ANYDEPTH)
+
+    # Read calibration info
+    frame_calib = calib.read_calibration(calib_dir, img_idx)
+    stereo_calibration_info = calib.get_stereo_calibration(frame_calib.p2,
+                                                           frame_calib.p3)
+
+    # Calculate the point cloud
+    point_cloud = calib.depth_from_disparity(disp, stereo_calibration_info)
+
+    return point_cloud
+
+
 
 def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
                           im_size=None, min_intensity=None):
@@ -233,12 +266,13 @@ def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
     """
 
     # Read calibration info
-    frame_calib = calib_utils.read_calibration(calib_dir, img_idx)
-    x, y, z, i = calib_utils.read_lidar(velo_dir=velo_dir, img_idx=img_idx)
+    frame_calib = calib.read_calibration(calib_dir, img_idx)
+    x, y, z, i = calib.read_lidar(velo_dir=velo_dir,
+                                  img_idx=img_idx)
 
     # Calculate the point cloud
     pts = np.vstack((x, y, z)).T
-    pts = calib_utils.lidar_to_cam_frame(pts, frame_calib)
+    pts = calib.lidar_to_cam_frame(pts, frame_calib)
 
     # The given image is assumed to be a 2D image
     if not im_size:
@@ -251,7 +285,7 @@ def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
         point_cloud = pts.T
 
         # Project to image frame
-        point_in_im = calib_utils.project_to_image(point_cloud, p=frame_calib.p2).T
+        point_in_im = calib.project_to_image(point_cloud, p=frame_calib.p2).T
 
         # Filter based on the given image size
         image_filter = (point_in_im[:, 0] > 0) & \
@@ -268,8 +302,253 @@ def get_lidar_point_cloud(img_idx, calib_dir, velo_dir,
         return pts[point_filter].T
 
 
+def get_depth_map_path(sample_name, depth_dir):
+
+
+
+    return depth_dir + '/%010d.png' %sample_name
+
+
+def get_depth_map(sample_name, depth_dir):
+    depth_map_path = get_depth_map_path(sample_name, depth_dir)
+    depth_map = depth_map_utils.read_depth_map(depth_map_path)
+    return depth_map
+
+'''
+'''
+obj_utils.get_depth_map_point_cloud(img_idx, self.dataset.calib_dir, self.dataset.depth_dir,im_size=im_size)
+'''
+
+
+
+
+
+
+def get_depth_map_point_cloud(img_idx, calib_dir, depth_dir, im_size):
+    """ Calculates the point cloud from a depth map
+
+    :param img_idx: image index
+    :param calib_dir: directory with calibration files
+    :param depth_dir: directory with depth maps
+    :param im_size: size of the image [h, w]
+
+    :return: (3, N) point_cloud in the form [[x,...][y,...][z,...]]
+    """
+    depth_map = depth_map_utils.get_depth_map(img_idx, depth_dir)
+
+    # Calculate point cloud from depth map
+    #frame_calib = calib.read_calibration(calib_dir, img_idx)
+
+    moose_calib = moose_load_calibration.load_calibration(calib_dir)
+
+    if img_idx < 100:
+
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM00']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p2 = T_IMG_CAM
+
+    elif (img_idx >= 100 and img_idx < 200):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM01']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p2 = T_IMG_CAM
+
+    elif (img_idx >= 200 and img_idx < 300):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM02']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p2 = T_IMG_CAM
+
+    elif (img_idx >= 300 and img_idx < 400):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM03']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p2 = T_IMG_CAM
+
+    elif (img_idx >= 400 and img_idx < 500):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM04']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p2 = T_IMG_CAM
+
+    elif (img_idx >= 500 and img_idx < 600):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM05']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p2 = T_IMG_CAM
+
+    elif (img_idx >= 600 and img_idx < 700):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM06']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p2 = T_IMG_CAM
+
+    elif (img_idx >= 700 and img_idx < 800):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM07']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p2 = T_IMG_CAM
+
+    else:
+        print("YOLO")
+
+
+    if img_idx < 100:
+
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM01']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p3 = T_IMG_CAM
+
+    elif (img_idx >= 100 and img_idx < 200):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM02']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p3 = T_IMG_CAM
+
+    elif (img_idx >= 200 and img_idx < 300):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM03']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p3 = T_IMG_CAM
+
+    elif (img_idx >= 300 and img_idx < 400):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM04']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p3 = T_IMG_CAM
+
+    elif (img_idx >= 400 and img_idx < 500):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM05']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p3 = T_IMG_CAM
+
+    elif (img_idx >= 500 and img_idx < 600):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM06']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p3 = T_IMG_CAM
+
+    elif (img_idx >= 600 and img_idx < 700):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM07']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p3 = T_IMG_CAM
+
+    elif (img_idx >= 700 and img_idx < 800):
+        T_IMG_CAM = np.eye(4);  # identity matrix
+        T_IMG_CAM[0:3, 0:3] = np.array(moose_calib['CAM00']['camera_matrix']['data']).reshape(-1,
+                                                                                        3)  # camera to image #intrinsic matrix
+
+        # T_IMG_CAM : 4 x 4 matrix
+        T_IMG_CAM = T_IMG_CAM[0:3, 0:4];  # remove last row, #choose the first 3 rows and get rid of the last column
+
+        p3 = T_IMG_CAM
+
+    else:
+        print("YOLO")
+
+
+
+
+    stereo_calibration_info = calib.get_stereo_calibration(
+        p2,
+        p3)
+
+    # Calculate points from depth map
+    depth_map_flattened = depth_map.flatten()
+    xx, yy = np.meshgrid(np.arange(1, im_size[0] + 1, 1),
+                         np.arange(1, im_size[1] + 1, 1))
+    xx = xx.flatten() - stereo_calibration_info.center_u
+    yy = yy.flatten() - stereo_calibration_info.center_v
+
+    temp = np.divide(depth_map_flattened, stereo_calibration_info.f)
+    x = np.multiply(xx, temp)
+    y = np.multiply(yy, temp)
+    z = depth_map_flattened
+
+    # Get x offset (b_cam) from calibration: cam_mat[0, 3] = (-f_x * b_cam)
+    x_offset = -stereo_calibration_info.p[0, 3] / stereo_calibration_info.f
+
+    point_cloud = np.asarray([x + x_offset, y, z])
+    points = point_cloud.T
+
+    # Filter points to image frame
+    point_in_im = calib.project_to_image(points.T, p=p2).T
+    image_filter = \
+        (point_in_im[:, 0] > 0) & (point_in_im[:, 0] < im_size[0]) & \
+        (point_in_im[:, 1] > 0) & (point_in_im[:, 1] < im_size[1])
+    filtered_point_cloud = points[image_filter].T
+
+    return filtered_point_cloud
+
+
+
 def get_road_plane(img_idx, planes_dir):
-    """Reads the road plane from file
+    """
+    Calculates the road plane
 
     :param int img_idx : Index of image
     :param str planes_dir : directory containing plane text files
@@ -277,14 +556,14 @@ def get_road_plane(img_idx, planes_dir):
     :return plane : List containing plane equation coefficients
     """
 
-    plane_file = planes_dir + '/%06d.txt' % img_idx
+    plane_file = planes_dir + '/%010d.txt' % img_idx
 
     with open(plane_file, 'r') as input_file:
         lines = input_file.readlines()
         input_file.close()
 
     # Plane coefficients stored in 4th row
-    lines = lines[3].split()
+    lines = lines[0].split()
 
     # Convert str to float
     lines = [float(i) for i in lines]
@@ -304,14 +583,15 @@ def get_road_plane(img_idx, planes_dir):
 
 
 def compute_box_corners_3d(object_label):
-    """Computes the 3D bounding box corner positions from an ObjectLabel
+    """
+    Computes the 3D bounding box corner positions from an ObjectLabel
 
     :param object_label: ObjectLabel to compute corners from
     :return: a numpy array of 3D corners if the box is in front of the camera,
              an empty array otherwise
     """
 
-    # Compute rotational matrix
+    # compute rotational matrix
     rot = np.array([[+np.cos(object_label.ry), 0, +np.sin(object_label.ry)],
                     [0, 1, 0],
                     [-np.sin(object_label.ry), 0, +np.cos(object_label.ry)]])
@@ -355,7 +635,7 @@ def project_box3d_to_image(corners_3d, p):
                          1, 2, 6, 5,  # left face
                          2, 3, 7, 6,  # back face
                          3, 0, 4, 7]).reshape((4, 4))  # right face
-    return calib_utils.project_to_image(corners_3d, p), face_idx
+    return calib.project_to_image(corners_3d, p), face_idx
 
 
 def compute_orientation_3d(obj, p):
@@ -383,7 +663,7 @@ def compute_orientation_3d(obj, p):
         if orientation3d[2, idx] < 0.1:
             return None
 
-    return calib_utils.project_to_image(orientation3d, p)
+    return calib.project_to_image(orientation3d, p)
 
 
 def is_point_inside(points, box_corners):
@@ -402,8 +682,7 @@ def is_point_inside(points, box_corners):
         - The dot product v.x is between v.P1 and v.P4
         - The dot product w.x is between w.P1 and w.P5
 
-    :param points: (3, N) point cloud to test in the form
-        [[x1...xn], [y1...yn], [z1...zn]]
+    :param points: 3D point cloud to test in the form [[x1...xn],[y1...yn],[z1...zn]]
     :param box_corners: 3D corners of the bounding box
 
     :return bool mask of which points are within the bounding box.
@@ -446,12 +725,10 @@ def get_point_filter(point_cloud, extents, ground_plane=None, offset_dist=2.0):
     Creates a point filter using the 3D extents and ground plane
 
     :param point_cloud: Point cloud in the form [[x,...],[y,...],[z,...]]
-    :param extents: 3D area in the form
-        [[min_x, max_x], [min_y, max_y], [min_z, max_z]]
-    :param ground_plane: Optional, coefficients of the ground plane
-        (a, b, c, d)
-    :param offset_dist: If ground_plane is provided, removes points above
-        this offset from the ground_plane
+    :param extents: 3D area in the form [[min_x, max_x], [min_y, max_y], [min_z, max_z]]
+    :param ground_plane: Optional, coefficients of the ground plane (a, b, c, d)
+    :param offset_dist: If ground_plane is provided, removes points above this offset from the
+        ground_plane
     :return: A binary mask for points within the extents and offset plane
     """
 
