@@ -1,7 +1,8 @@
-import csv
+
 import numpy as np
-import cv2
 import os
+
+import cv2
 
 
 class FrameCalibrationData:
@@ -408,3 +409,19 @@ def lidar_to_cam_frame(xyz_lidar, frame_calib):
 
     # Change to N x 3 array for consistency.
     return ret_xyz[0:3].T
+
+
+def project_pc_to_image(point_cloud, cam_p):
+    """Projects a 3D point cloud to 2D points
+    Args:
+        point_cloud: (3, N) point cloud
+        cam_p: camera projection matrix
+    Returns:
+        pts_2d: (2, N) projected coordinates [u, v] of the 3D points
+    """
+
+    pc_padded = np.append(point_cloud, np.ones((1, point_cloud.shape[1])), axis=0)
+    pts_2d = np.dot(cam_p, pc_padded)
+
+    pts_2d[0:2] = pts_2d[0:2] / pts_2d[2]
+    return pts_2d[0:2]
